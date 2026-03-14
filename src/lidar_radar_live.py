@@ -2,7 +2,7 @@ import socket
 import numpy as np
 import matplotlib.pyplot as plt
 
-HOST = "192.168.0.1"
+HOST = "192.168.0.102"
 PORT = 2111
 CMD = b"\x02sRN LMDscandata\x03"
 
