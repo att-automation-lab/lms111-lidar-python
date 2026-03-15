@@ -2,6 +2,7 @@ import socket
 import serial
 import time
 import numpy as np
+from collections import deque
 
 # -----------------------------
 # LMS111 settings
@@ -17,19 +18,25 @@ SERIAL_PORT = "COM3"
 SERIAL_BAUD = 115200
 
 # -----------------------------
-# Tracking settings
+# Tracking zone for your test board
 # -----------------------------
-TRACK_MIN_ANGLE = -60.0   # ดูเฉพาะซ้าย/ขวาด้านหน้า
+TRACK_MIN_ANGLE = -60.0
 TRACK_MAX_ANGLE = 60.0
-TRACK_MAX_DISTANCE = 0.3  # สนใจเป้าหมายไม่เกิน 2 เมตร
-MIN_VALID_DISTANCE = 0.05
+TRACK_MAX_DISTANCE = 0.40   # 30 cm
+MIN_VALID_DISTANCE = 0.05   # 5 cm
 
+# -----------------------------
+# Servo settings
+# -----------------------------
 SERVO_CENTER = 90
 SERVO_MIN = 20
 SERVO_MAX = 160
 
-SEND_DEADBAND = 2         # ส่งใหม่เมื่อเปลี่ยนเกิน 2 องศา
-LOOP_DELAY = 0.10         # วนทุก 100 ms
+SERVO_DEADBAND = 3          # เปลี่ยนน้อยกว่า 3° ไม่ส่ง
+LOOP_DELAY = 0.15           # 150 ms
+SMOOTH_WINDOW = 5           # ค่าเฉลี่ย 5 เฟรม
+
+angle_history = deque(maxlen=SMOOTH_WINDOW)
 
 
 def get_scan():
@@ -67,7 +74,7 @@ def get_scan():
 
 
 def lidar_angle_to_servo(target_angle_deg):
-    # target_angle_deg = 0 => servo 90
+    # กลับทิศตามที่คุณทดลองแล้วว่าถูก
     servo_angle = SERVO_CENTER - target_angle_deg
 
     if servo_angle < SERVO_MIN:
@@ -92,6 +99,7 @@ def find_target(angles_deg, dist):
     candidate_angles = angles_deg[mask]
     candidate_dist = dist[mask]
 
+    # เลือกจุดที่ใกล้สุดในโซนทดลอง
     i = np.argmin(candidate_dist)
     return float(candidate_angles[i]), float(candidate_dist[i])
 
@@ -110,17 +118,24 @@ def main():
             target_angle, target_dist = find_target(angles_deg, dist)
 
             if target_angle is None:
-                print("No target")
+                angle_history.clear()
+                print("No target in test zone")
                 time.sleep(LOOP_DELAY)
                 continue
 
-            servo_angle = lidar_angle_to_servo(target_angle)
+            # smoothing
+            angle_history.append(target_angle)
+            smooth_angle = sum(angle_history) / len(angle_history)
 
-            if (last_sent is None) or (abs(servo_angle - last_sent) >= SEND_DEADBAND):
+            servo_angle = lidar_angle_to_servo(smooth_angle)
+
+            # deadband
+            if (last_sent is None) or (abs(servo_angle - last_sent) >= SERVO_DEADBAND):
                 ser.write(f"{servo_angle}\n".encode("utf-8"))
                 print(
-                    f"Target: angle={target_angle:+.1f} deg | "
-                    f"dist={target_dist:.2f} m | "
+                    f"Target raw={target_angle:+.1f}° | "
+                    f"smooth={smooth_angle:+.1f}° | "
+                    f"dist={target_dist*100:.1f} cm | "
                     f"servo={servo_angle}"
                 )
                 last_sent = servo_angle
